@@ -10,35 +10,75 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+
+    env:
+      GODOT_VERSION: "4.3-stable"
+      ANDROID_HOME: /opt/android-sdk
+      ANDROID_SDK_ROOT: /opt/android-sdk
+      JAVA_HOME: /usr/lib/jvm/java-17-openjdk-amd64
+
     steps:
       - name: Checkout project
         uses: actions/checkout@v4
 
-      - name: Install Godot and Android templates
-        run: |
-          GODOT_VERSION="4.3-stable"
-          wget -q "https://github.com/godotengine/godot/releases/download/${GODOT_VERSION}/Godot_v${GODOT_VERSION}_linux.x86_64.zip"
-          unzip -q "Godot_v${GODOT_VERSION}_linux.x86_64.zip"
-          sudo mv Godot_v${GODOT_VERSION}_linux.x86_64 /usr/local/bin/godot
-          wget -q "https://github.com/godotengine/godot/releases/download/${GODOT_VERSION}/Godot_v${GODOT_VERSION}_export_templates.tpz"
-          mkdir -p ~/.local/share/godot/export_templates
-          unzip -q "Godot_v${GODOT_VERSION}_export_templates.tpz" -d /tmp/godot-templates
-          mv /tmp/godot-templates/templates ~/.local/share/godot/export_templates/${GODOT_VERSION}
-
-      - name: Install Android build tools
+      - name: Install Java and utilities
         run: |
           sudo apt-get update
-          sudo apt-get install -y openjdk-17-jdk android-sdk
-          echo "JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64" >> $GITHUB_ENV
+          sudo apt-get install -y openjdk-17-jdk unzip wget
+          java -version
+
+      - name: Install Android SDK
+        run: |
+          mkdir -p "$ANDROID_HOME/cmdline-tools"
+          wget -q https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip -O /tmp/android-tools.zip
+          mkdir -p /tmp/android-tools
+          unzip -q /tmp/android-tools.zip -d /tmp/android-tools
+          mkdir -p "$ANDROID_HOME/cmdline-tools/latest"
+          mv /tmp/android-tools/cmdline-tools/* "$ANDROID_HOME/cmdline-tools/latest/"
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --sdk_root="$ANDROID_HOME" --licenses
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --sdk_root="$ANDROID_HOME" \
+            "platform-tools" \
+            "platforms;android-34" \
+            "build-tools;34.0.0" \
+            "cmdline-tools;latest" \
+            "cmake;3.10.2.4988404" \
+            "ndk;23.2.8568313"
+
+      - name: Install Godot and export templates
+        run: |
+          wget -q "https://github.com/godotengine/godot/releases/download/${GODOT_VERSION}/Godot_v${GODOT_VERSION}_linux.x86_64.zip" -O /tmp/godot.zip
+          unzip -q /tmp/godot.zip -d /tmp/godot
+          sudo install -m 755 "/tmp/godot/Godot_v${GODOT_VERSION}_linux.x86_64" /usr/local/bin/godot
+          wget -q "https://github.com/godotengine/godot/releases/download/${GODOT_VERSION}/Godot_v${GODOT_VERSION}_export_templates.tpz" -O /tmp/templates.tpz
+          mkdir -p "$HOME/.local/share/godot/export_templates/4.3.stable"
+          unzip -q /tmp/templates.tpz -d /tmp/godot-templates
+          cp -r /tmp/godot-templates/templates/. "$HOME/.local/share/godot/export_templates/4.3.stable/"
+          godot --version
+
+      - name: Configure Godot Android paths
+        run: |
+          mkdir -p "$HOME/.config/godot"
+          cat > "$HOME/.config/godot/editor_settings-4.tres" <<EOF
+          [resource]
+          config_version = 5
+          export/android/java_sdk_path = "$JAVA_HOME"
+          export/android/android_sdk_path = "$ANDROID_HOME"
+          EOF
+
+      - name: Import project
+        run: |
+          godot --headless --editor --path . --quit
 
       - name: Export Android APK
         run: |
           mkdir -p build
-          godot --headless --path . --editor --quit
           godot --headless --path . --export-debug "Android" build/battle-of-the-soldiers.apk
+          test -s build/battle-of-the-soldiers.apk
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
           name: battle-of-the-soldiers-android-apk
           path: build/battle-of-the-soldiers.apk
+          if-no-files-found: error
+          
